@@ -5,8 +5,9 @@ import { UploadCloud, FileSpreadsheet, Printer, AlertCircle, CheckCircle2, Calen
 // 核心系統設定與常數
 // ==========================================
 const REQUIRED_HEADERS = {
-  sales: ['客戶編號', '客戶姓名', '銷貨單編號', '付款編號', '付款金額', '出貨日期', '付款備註'],
-  returns: ['客戶編號', '客戶姓名', '退換貨單號', '退換貨金額合計', '退換貨單備註']
+  // 修改：在銷貨單及銷退單都新增 '日期' 作為必要欄位
+  sales: ['日期', '客戶編號', '客戶姓名', '銷貨單編號', '付款編號', '付款金額', '出貨日期', '付款備註'],
+  returns: ['日期', '客戶編號', '客戶姓名', '退換貨單號', '退換貨金額合計', '退換貨單備註']
 };
 
 export default function App() {
@@ -17,7 +18,7 @@ export default function App() {
   const [errors, setErrors] = useState([]);
   const [reportData, setReportData] = useState(null);
   const [isGenerating, setIsGenerating] = useState(false);
-  const [isPanelOpen, setIsPanelOpen] = useState(true); // 新增：控制面板展開狀態
+  const [isPanelOpen, setIsPanelOpen] = useState(true);
 
   // --- 動態載入 SheetJS (xlsx) ---
   useEffect(() => {
@@ -131,8 +132,9 @@ export default function App() {
   // 業務邏輯：資料彙整與報表生成
   // ==========================================
   const generateReport = () => {
-    if (parsedData.sales.length === 0 && parsedData.returns.length === 0) {
-      setErrors(["請至少上傳一份有效且包含數據的 Excel 檔案再生成報表。"]);
+    // 修改：銷退單改為非必要檔案，只要確保有銷貨單即可
+    if (parsedData.sales.length === 0) {
+      setErrors(["請上傳有效且包含數據的「銷貨單付款明細」Excel 檔案再生成報表。"]);
       return;
     }
 
@@ -155,6 +157,7 @@ export default function App() {
         const amount = parseAmount(row['付款金額']);
         customerMap.get(cID).sales.push({
           ...row,
+          '日期': formatExcelDate(row['日期']), // 修改：清洗並格式化新增的「日期」欄位
           '出貨日期': formatExcelDate(row['出貨日期']),
           '付款金額': amount
         });
@@ -168,6 +171,7 @@ export default function App() {
         const amount = parseAmount(row['退換貨金額合計']);
         customerMap.get(cID).returns.push({
           ...row,
+          '日期': formatExcelDate(row['日期']), // 修改：清洗並格式化新增的「日期」欄位
           '退換貨金額合計': amount
         });
         customerMap.get(cID).totalReturns += amount;
@@ -176,15 +180,27 @@ export default function App() {
       // 4. 排序與總計運算
       let globalTotalSales = 0;
       let globalTotalReturns = 0;
+
+      // 修改：建立通用的明細排序函式 (優先：日期由舊到新，次要：單號由舊到新)
+      const sortDetails = (a, b, docNumKey) => {
+        const dateA = new Date(a['日期']).getTime() || 0;
+        const dateB = new Date(b['日期']).getTime() || 0;
+        
+        if (dateA !== dateB) {
+          return dateA - dateB; // 依照日期：舊到新 (時間戳小到大)
+        }
+        // 若日期相同，依照單號數字：舊到新 (數字小到大)
+        return extractNumber(a[docNumKey]) - extractNumber(b[docNumKey]);
+      };
       
       const customersList = Array.from(customerMap.values()).map(c => {
         c.netTotal = c.totalSales - c.totalReturns;
         globalTotalSales += c.totalSales;
         globalTotalReturns += c.totalReturns;
 
-        // 內部明細排序 (依單號數字排序)
-        c.sales.sort((a, b) => extractNumber(a['銷貨單編號']) - extractNumber(b['銷貨單編號']));
-        c.returns.sort((a, b) => extractNumber(a['退換貨單號']) - extractNumber(b['退換貨單號']));
+        // 修改：套用新的排序規則
+        c.sales.sort((a, b) => sortDetails(a, b, '銷貨單編號'));
+        c.returns.sort((a, b) => sortDetails(a, b, '退換貨單號'));
         
         return c;
       });
@@ -204,8 +220,8 @@ export default function App() {
 
       setIsGenerating(false);
       setErrors([]);
-      setIsPanelOpen(false); // 新增：報表產生後自動收合面板
-    }, 500); // 模擬運算延遲以顯示 Loading 效果
+      setIsPanelOpen(false); 
+    }, 500); 
   };
 
   const triggerPrint = () => {
@@ -248,7 +264,6 @@ export default function App() {
           </div>
         </div>
 
-        {/* 使用 isPanelOpen 控制此區塊的顯示/隱藏 */}
         <div className={`transition-all duration-300 ${isPanelOpen ? 'block' : 'hidden'}`}>
           <div className="max-w-6xl mx-auto mt-6 grid grid-cols-1 md:grid-cols-3 gap-6">
             
@@ -278,7 +293,7 @@ export default function App() {
             {/* 檔案上傳 1 */}
             <div className="bg-gray-50 p-4 rounded-lg border border-gray-200">
               <h3 className="font-semibold text-gray-700 flex items-center gap-2 mb-3">
-                <UploadCloud className="w-4 h-4" /> 銷貨單付款明細
+                <UploadCloud className="w-4 h-4" /> 銷貨單付款明細 <span className="text-red-500 text-xs ml-1">*必填</span>
               </h3>
               <label className="block w-full cursor-pointer bg-white border border-dashed border-gray-300 hover:border-blue-500 p-3 rounded text-center transition-colors">
                 <span className="text-sm text-gray-600">點擊選擇或拖曳 Excel 檔案</span>
@@ -291,7 +306,8 @@ export default function App() {
             {/* 檔案上傳 2 */}
             <div className="bg-gray-50 p-4 rounded-lg border border-gray-200">
               <h3 className="font-semibold text-gray-700 flex items-center gap-2 mb-3">
-                <UploadCloud className="w-4 h-4" /> 銷退單
+                {/* 修改：加上「非必填」的標示 */}
+                <UploadCloud className="w-4 h-4" /> 銷退單 <span className="text-gray-500 font-normal text-sm ml-1">(非必填)</span>
               </h3>
               <label className="block w-full cursor-pointer bg-white border border-dashed border-gray-300 hover:border-blue-500 p-3 rounded text-center transition-colors">
                 <span className="text-sm text-gray-600">點擊選擇或拖曳 Excel 檔案</span>
@@ -328,14 +344,12 @@ export default function App() {
         </div>
       </div>
 
-      {/* 報表預覽區塊 (設定為 A4 寬度與列印樣式) */}
+      {/* 報表預覽區塊 */}
       {reportData && (
         <div className="p-6 print:p-0">
           <div className="max-w-[210mm] mx-auto bg-white shadow-xl print:shadow-none print:max-w-none text-sm leading-relaxed">
             
-            {/* ================================== */}
-            {/* 第一頁：總表 (Page 1)               */}
-            {/* ================================== */}
+            {/* 第一頁：總表 */}
             <div className="p-10 print:p-0 bg-white">
               <div className="text-center mb-8 border-b-2 border-gray-800 pb-4">
                 <h2 className="text-3xl font-bold text-gray-900 tracking-wider">月結請款單總表</h2>
@@ -371,7 +385,6 @@ export default function App() {
                       </td>
                     </tr>
                   ))}
-                  {/* 總計列 */}
                   <tr className="bg-gray-100 font-bold text-gray-900">
                     <td colSpan="2" className="border border-gray-800 py-3 px-4 text-right">總計：</td>
                     <td className="border border-gray-800 py-3 px-4 text-right">${formatCurrency(reportData.summary.totalSales)}</td>
@@ -382,11 +395,8 @@ export default function App() {
               </table>
             </div>
 
-            {/* ================================== */}
-            {/* 第二頁起：客戶明細 (Customer Details) */}
-            {/* ================================== */}
+            {/* 第二頁起：客戶明細 */}
             {reportData.details.map((customer, index) => {
-              // 計算銷貨單的 RowSpan (依據銷貨單編號合併)
               const salesRowSpans = computeRowSpans(customer.sales, '銷貨單編號');
 
               return (
@@ -411,6 +421,8 @@ export default function App() {
                     <table className="w-full border-collapse border border-gray-800">
                       <thead>
                         <tr className="bg-gray-100 text-gray-800">
+                          {/* 修改：在第一欄新增「日期」 */}
+                          <th className="border border-gray-800 py-2 px-3 text-center whitespace-nowrap w-28">日期</th>
                           <th className="border border-gray-800 py-2 px-3 text-center whitespace-nowrap w-36">銷貨單編號</th>
                           <th className="border border-gray-800 py-2 px-3 text-center whitespace-nowrap w-32">付款編號</th>
                           <th className="border border-gray-800 py-2 px-3 text-center whitespace-nowrap w-28">出貨日期</th>
@@ -424,6 +436,10 @@ export default function App() {
                             const span = salesRowSpans[i];
                             return (
                               <tr key={i} className="hover:bg-gray-50">
+                                {/* 修改：因為同一個單號日期也會相同，所以讓日期欄位與單號套用一樣的 RowSpan 合併邏輯 */}
+                                {span > 0 && (
+                                  <td rowSpan={span} className="border border-gray-800 py-2 px-3 text-center bg-white align-top whitespace-nowrap">{sale['日期']}</td>
+                                )}
                                 {span > 0 && (
                                   <td rowSpan={span} className="border border-gray-800 py-2 px-3 text-center bg-white align-top font-medium text-blue-900 whitespace-nowrap">{sale['銷貨單編號']}</td>
                                 )}
@@ -438,7 +454,8 @@ export default function App() {
                           })
                         ) : (
                           <tr>
-                            <td colSpan="5" className="border border-gray-800 py-6 text-center text-gray-500 italic">
+                            {/* 修改：因為增加了日期欄位，所以 colSpan 改為 6 */}
+                            <td colSpan="6" className="border border-gray-800 py-6 text-center text-gray-500 italic">
                               本月無銷貨單付款明細
                             </td>
                           </tr>
@@ -455,6 +472,8 @@ export default function App() {
                     <table className="w-full border-collapse border border-gray-800">
                       <thead>
                         <tr className="bg-gray-100 text-gray-800">
+                          {/* 修改：在第一欄新增「日期」 */}
+                          <th className="border border-gray-800 py-2 px-3 text-center whitespace-nowrap w-28">日期</th>
                           <th className="border border-gray-800 py-2 px-3 text-center whitespace-nowrap w-40">退換貨單號</th>
                           <th className="border border-gray-800 py-2 px-3 text-right whitespace-nowrap w-32">退換貨金額</th>
                           <th className="border border-gray-800 py-2 px-3 text-left">退換貨備註</th>
@@ -464,6 +483,8 @@ export default function App() {
                         {customer.returns.length > 0 ? (
                           customer.returns.map((ret, i) => (
                             <tr key={i} className="hover:bg-gray-50">
+                              {/* 修改：新增了日期的資料格 */}
+                              <td className="border border-gray-800 py-2 px-3 text-center whitespace-nowrap">{ret['日期']}</td>
                               <td className="border border-gray-800 py-2 px-3 text-center font-medium text-red-900 whitespace-nowrap">{ret['退換貨單號']}</td>
                               <td className="border border-gray-800 py-2 px-3 text-right text-red-700 whitespace-nowrap">-${formatCurrency(ret['退換貨金額合計'])}</td>
                               <td className="border border-gray-800 py-2 px-3 text-left text-gray-600 text-xs">{ret['退換貨單備註']}</td>
@@ -471,7 +492,8 @@ export default function App() {
                           ))
                         ) : (
                           <tr>
-                            <td colSpan="3" className="border border-gray-800 py-6 text-center text-gray-500 italic">
+                            {/* 修改：因為增加了日期欄位，所以 colSpan 改為 4 */}
+                            <td colSpan="4" className="border border-gray-800 py-6 text-center text-gray-500 italic">
                               本月無銷退單明細
                             </td>
                           </tr>
